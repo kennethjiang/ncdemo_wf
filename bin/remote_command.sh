@@ -31,3 +31,5 @@ send -- "$password\r"
 # send blank line (\r) to make sure we get back to gui
 send -- "\r"
 expect eof
+catch wait result
+exit [lindex $result 3]
