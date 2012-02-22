@@ -1,6 +1,6 @@
 class TimeoutError(Exception):
     pass
 
-class ReturnCodeNotZeroError(Exception):
+class RemoteCommandError(Exception):
     pass
 

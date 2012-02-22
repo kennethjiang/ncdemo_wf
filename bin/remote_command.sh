@@ -19,17 +19,25 @@ set ipaddr [lindex $argv 0]
 set username [lindex $argv 1]
 set password [lindex $argv 2]
 set scriptname [lindex $argv 3]
-set arg1 [lindex $argv 4]
+set timeout [lindex $argv 4]
+
+if { $timeout eq "" } {
 set timeout -1
+}
+
 # now connect to remote UNIX box (ipaddr) with given script to execute
-spawn ssh $username@$ipaddr $scriptname $arg1
+spawn ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $username@$ipaddr $scriptname
 match_max 100000
 # Look for passwod prompt
-expect "*?assword:*"
+expect {
 # Send password aka $password
-send -- "$password\r"
+"*?assword:*" {send -- "$password\r"}
+}
 # send blank line (\r) to make sure we get back to gui
 send -- "\r"
-expect eof
+expect {
+timeout {exit -1}
+eof
+}
 catch wait result
 exit [lindex $result 3]
