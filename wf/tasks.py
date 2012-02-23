@@ -1,124 +1,98 @@
-import socket
-import time
 import logging
 from celery.decorators import task
 from django.conf import settings
 
-from novaclient.v1_1 import client
-
-from wf.exceptions import TimeoutError 
+import timeout 
+import iaas
+import win
 
 log = logging.getLogger(__name__)
 
-@task
+ADDC_IMG_ID = getattr(settings, 'ADDC_IMAGE_ID')
+EXCH_IMG_ID = getattr(settings, 'EXCH_IMAGE_ID')
+ADDC_FLAVOR_ID = getattr(settings, 'ADDC_FLAVOR_ID')
+EXCH_FLAVOR_ID = getattr(settings, 'EXCH_FLAVOR_ID')
+ADMIN_USER = 'administrator'
+ADMIN_INI_PWD = getattr(settings, 'ADMIN_INI_PASSWORD')
+
+"""
+Task that will deploy a Windows domain, including a domain controller and an
+exchange server.
+domain_name: name of the to-be-created domain, assumed to end with ".com"
+"""
+@task(time_limit=120*60)
 def deploy_service_domain(domain_name):
-    pass
+
+    addc_admin_pwd = win.new_password()
+    exch_admin_pwd = win.new_password()
+
+    #create addc
+    addc_ip = timeout.attempt(iaas.create_instance, 
+        args=["dc."+domain_name, ADDC_IMG_ID, ADDC_FLAVOR_ID],
+	timeout=60, retries=0)
+
+    #create exchange server
+    exch_ip = timeout.attempt(iaas.create_instance, 
+        args=["mail."+domain_name, EXCH_IMG_ID, EXCH_FLAVOR_ID],
+	timeout=60, retries=0)
+
+    #delayed task to promote to ADDC
+    promote_addc.delay(domain_name=domain_name, ip=addc_ip, pwd=addc_admin_pwd)
+    
+    #delayed task to "preconfigured" exchange server (whatever can be done without having to join domain
+    exch_pre_join_domain.delay(exch_ip, exch_admin_pwd)
+    
 
 """
 Task that will promote a Windows 2008 server to ADDC
 domain_name: name of the to-be-created domain, assumed to end with ".com"
 ip: ip address of the server
 """
-@task(default_retry_delay=10, max_retries=2, soft_time_limit=10*60, time_limit=20*60)
-def promote_addc(domain_name, ip):
-    try:
+@task(time_limit=120*60)
+def promote_addc(domain_name, ip, pwd):
 
-        #wait for the server to boot
-        wait_for_server(ip, timeout=5*60)
-	# change password. Change hostname to "dc". Server will automatically reboot afterward
-        ssh(ip, 'administrator', 'abcDEFG!@#12', 'net user administrator "abcDEFG!@#12" && netdom renamecomputer localhost /NewName:dc /reboot:5 /Force', timeout=30)
-	#now it could take as long as 60s before Windows start rebooting process
-	time.sleep(60)
-	wait_for_server(ip, timeout=2*60)
-	# command to promote server to ADDC
-        ssh(ip, 'administrator', 'abcDEFG!@#12', 'dcpromo /unattend /InstallDns:yes /dnsOnNetwork:yes /replicaOrNewDomain:domain /newDomain:forest /newDomainDnsName:%s /DomainNetbiosName:%s /CreateDNSDelegation:NO /databasePath:"%systemroot%\NTDS" /logPath:"%systemroot%\NTDS" /sysvolpath:"%systemroot%\SYSVOL" /safeModeAdminPassword:abcDEFG!@#12 /forestLevel:3 /domainLevel:3 /rebootOnCompletion:yes' % (domain_name, domain_name.replace('.com', '')), timeout=2*60)
+    #wait for server to boot
+    win.wait_for_server(ip, timeout=5*60)
 
-    except Exception, exc:
-        log.exception("Error in the process of promoting %s to ADDC" % (ip, exc))
-        deploy_addc.retry(exc=exc)
+    #change default password
+    timeout.attempt(win.change_password, kwargs={
+        'ip': ip, 'username': ADMIN_USER, 'old_pwd': ADMIN_INI_PWD, 'new_pwd': pwd},
+	timeout=15, retries=2)
 
-@task(default_retry_delay=60, max_retries=3)
-def create_instance(name, image, flavor, userdata=None, key_name=None, security_groups=[]):
-    #log = create_instance.get_logger()
-    try:
-        log.debug("calling nova_client.servers.create() with: name = %s, image = %d, flavor = %d, userdata = %s, key_name = %s, security_groups = %s)" % (name, image, flavor, userdata, key_name, security_groups))
-        return nova_client().servers.create(
-            name=name, 
-	    image=image, 
-	    flavor=flavor, 
-	    userdata=userdata, 
-	    key_name=key_name, 
-	    security_groups=security_groups)
-    except Exception, exc:
-        log.exception("Error calling Nova: %s" % exc)
-        create_instance.retry(exc=exc)
+    # change hostname to "dc"
+    timeout.attempt(win.rename_host, kwargs={
+        'ip': ip, 'username': ADMIN_USER, 'password': pwd, 'new_name': 'dc'},
+	timeout=60, retries=2)
 
-@task(default_retry_delay=60, max_retries=10)
-def delete_instance(id):
-    #log = delete_instance.get_logger()
-    try:
-        log.debug("calling nova_client.servers.delete() with: server = %d" % id)
-        return nova_client().servers.delete(server=id)
-    except Exception, exc:
-        log.exception("Error calling Nova: %s" % exc)
-        delete_instance.retry(exc=exc)
-
-def wait_for_server(host, port=22, protocol=socket.SOCK_STREAM, timeout=-1, retry_delay=1):
-    #log = wait_for_server.get_logger()
-    s = socket.socket(socket.AF_INET, protocol)
-    start = time.time()
-    while (timeout < 0 or time.time() < (start + timeout)):
-        try:
-	    log.debug("trying to connect to %s:%d" % (host, port))
-            s.connect((host, port))
-	    log.debug("connected!")
-            s.shutdown(2)
-	    return True
-        except Exception, exc:
-	    log.debug("Unable to connect. Error:\n %s" % exc)
-            time.sleep(retry_delay)
-    raise TimeoutError(os.strerror(errno.ETIME))
-
-def nova_client():
-    return client.Client(
-        getattr(settings, 'NOVA_USER', 'admin'),
-        getattr(settings, 'NOVA_PASSWORD', 'admin'),
-        getattr(settings, 'NOVA_TENANT', 'admin'),
-        getattr(settings, 'NOVA_AUTH_URL', 'http://localhost:5000/v2.0/'),
-    )
+    # promote it to ADDC. SSH command will return "1" for unknown reason even in case of success
+    # Retry will test if previous attempt was successful or not. 
+    # However, there should be a delay between retries to give server time to start booting
+    timeout.attempt(win.promote_addc, kwargs={
+        'ip': ip, 'username': ADMIN_USER, 'password': pwd, 'domain_name': domain_name},
+	timeout=10*60, retries=2, retry_delay=15)
 
 
+"""
+Task that will do all configuration that can be done prior to joinging domain on a Exchange Server 
+"""
+@task(time_limit=120*60)
+def exch_pre_join_domain(ip, pwd):
 
-def ssh(host, username, password, cmd, timeout=60):
+    #wait for server to boot
+    win.wait_for_server(ip, timeout=5*60)
 
-    def run_ssh(host, username, password, cmd):
-        from subprocess import Popen, PIPE
-        from os.path import join, abspath, dirname
-        remote_cmd = [join(abspath(dirname(__file__)), '..', 'bin', 'remote_command.sh'), host, username, password, cmd]
-	log.debug("Running system command %s" % remote_cmd)
-	p = Popen(remote_cmd, shell=False, stdout=PIPE, stderr=PIPE)
-	log.debug("STDOUT OF REMOTE:\n")
-	log.debug(p.stdout.read())
-	log.debug("STDERR OF REMOTE:\n")
-	log.debug(p.stderr.read())
-	if( 0 != p.wait() ):
-            raise ReturnCodeNotZeroError ("Process exist with return code %d" % p.poll())
+    #change default password
+    timeout.attempt(win.change_password, kwargs={
+        'ip': ip, 'username': ADMIN_USER, 'old_pwd': ADMIN_INI_PWD, 'new_pwd': pwd},
+	timeout=15, retries=2)
 
-    with_timeout(run_ssh, args=[host, username, password, cmd], seconds=timeout)
-            
-import errno
-import os
-import signal
+    # change hostname to "mail"
+    timeout.attempt(win.rename_host, kwargs={
+        'ip': ip, 'username': ADMIN_USER, 'password': pwd, 'new_name': 'mail'},
+	timeout=60, retries=2)
 
-def with_timeout(func, args=[], kwargs={}, seconds=10, error_message=os.strerror(errno.ETIME)):
-    def _handle_timeout(signum, frame):
-        raise TimeoutError(error_message)
-
-    signal.signal(signal.SIGALRM, _handle_timeout)
-    signal.alarm(seconds)
-    try:
-        result = func(*args, **kwargs)
-    finally:
-        signal.alarm(0)
-    return result
+    # install IIS, required by exchange 2010
+    timeout.attempt(win.install_iis, kwargs={
+        'ip': ip, 'username': ADMIN_USER, 'password': pwd},
+	timeout=20*60, retries=2)
 

@@ -12,10 +12,10 @@ MANAGERS = ADMINS
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql', # Add 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'oracle'.
-        'NAME': 'django_databae',                      # Or path to database file if using sqlite3.
+        'NAME': 'netcloud',                      # Or path to database file if using sqlite3.
         'USER': 'root',                      # Not used with sqlite3.
-        'PASSWORD': 'mysql',                  # Not used with sqlite3.
-        'HOST': '',                      # Set to empty string for localhost. Not used with sqlite3.
+        'PASSWORD': 'dalun',                  # Not used with sqlite3.
+        'HOST': '172.16.0.14',                      # Set to empty string for localhost. Not used with sqlite3.
         'PORT': '',                      # Set to empty string for default. Not used with sqlite3.
     }
 }
@@ -173,3 +173,9 @@ NOVA_USER = "admin"
 NOVA_PASSWORD = "letmein"
 NOVA_TENANT = "admin"
 NOVA_AUTH_URL = "http://192.168.5.5:5000/v2.0"
+
+ADDC_IMAGE_ID = 52
+EXCH_IMAGE_ID = 53
+ADDC_FLAVOR_ID = 1
+EXCH_FLAVOR_ID = 7
+ADMIN_INI_PASSWORD = 'abcDEFG!@#12'

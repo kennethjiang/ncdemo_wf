@@ -2,17 +2,16 @@ import socket
 import time
 import re
 import logging
-import errno
 import os
-import signal
-from django.conf import settings
 
-from wf.exceptions import TimeoutError, RemoteCommandError
+import wf.timeout
 
 log = logging.getLogger(__name__)
 
 
 def rename_host(ip, username, password, new_name):
+    
+    wait_for_server(ip)
     # guarding condition to make it idempotent
     (out, err) = ssh(ip, username, password, 'hostname', timeout=20)
     if re.search("^{hostname}\s*$".format(hostname=new_name), out, re.M):
@@ -32,6 +31,8 @@ def change_password(ip, username, old_pwd, new_pwd):
  
 
 def promote_addc(ip, username, password, domain_name):
+
+    wait_for_server(ip)
     # guarding condition to make it idempotent
     try:
         log.info("Testing if %s is listening on 53(DNS). If so it's a domain controller already" % ip)
@@ -43,6 +44,23 @@ def promote_addc(ip, username, password, domain_name):
     # command to promote server to ADDC
     ssh(ip, username, password, 'dcpromo /unattend /InstallDns:yes /dnsOnNetwork:yes /replicaOrNewDomain:domain /newDomain:forest /newDomainDnsName:{domain} /DomainNetbiosName:{netbios} /CreateDNSDelegation:NO /databasePath:"%systemroot%\NTDS" /logPath:"%systemroot%\NTDS" /sysvolpath:"%systemroot%\SYSVOL" /safeModeAdminPassword:abcDEFG!@#12 /forestLevel:3 /domainLevel:3 /rebootOnCompletion:yes'.format(domain=domain_name, netbios=domain_name.replace('.com', '')), timeout=10*60)
     wait_for_reboot(ip)
+
+
+def install_iis(ip, username, password):
+
+    wait_for_server(ip)
+    # guarding condition to make it idempotent
+    try:
+        log.info("Testing if %s is listening on 80. If so it already has IIS running" % ip)
+        if wait_for_server(host=ip, port=80, timeout=3):
+	    return
+    except:
+        log.info("Not accepting on 80. Moving ahead to install IIS on %s" % ip)
+
+    # command to install IIS
+    ssh(ip, username, password, 'PowerShell -NoExit -Command " & {Servermanagercmd -i rsat-adds,Web-Server,Web-Basic-Auth,Web-Windows-Auth,Web-Metabase,Web-Net-Ext,Web-Lgcy-Mgmt-Console,WAS-Process-Model,RSAT-Web-Server,Web-ISAPI-Ext,Web-Digest-Auth,Web-Dyn-Compression,NET-HTTP-Activation,RPC-Over-HTTP-Proxy -Restart}', timeout=20*60)
+    wait_for_reboot(ip)
+
 
 def wait_for_server(host, port=22, protocol=socket.SOCK_STREAM, timeout=None, retry_delay=1):
     start = time.time()
@@ -58,7 +76,7 @@ def wait_for_server(host, port=22, protocol=socket.SOCK_STREAM, timeout=None, re
         except Exception, exc:
 	    log.debug("Unable to connect. Error: %s" % exc)
             time.sleep(retry_delay)
-    raise TimeoutError(os.strerror(errno.ETIME))
+    raise timeout.TimeoutError(os.strerror(errno.ETIME))
 
 
 def wait_for_reboot(ip):
@@ -92,37 +110,6 @@ def ssh(host, username, password, cmd, timeout=None):
             raise RemoteCommandError ("Process exist with return code %d" % ret)
 	return (out.getvalue(), err.getvalue())
 
-"""
-timeout in seconds. None - wait indefinitely
-"""
-def with_timeout(func, args=[], kwargs={}, timeout=None, error_message=os.strerror(errno.ETIME)):
-    def _handle_timeout(signum, frame):
-        raise TimeoutError(error_message)
-
-    signal.signal(signal.SIGALRM, _handle_timeout)
-    signal.alarm(0 if timeout is None else timeout)
-    try:
-        result = func(*args, **kwargs)
-    finally:
-        signal.alarm(0)
-    return result
-
-
-"""
-timeout in seconds. 0 - wait indefinitely
-"""
-def attempt(func, args=[], kwargs={}, timeout=None, retries=3):
-    while True:
-        try:
-            return with_timeout(func, args=args, kwargs=kwargs, timeout=timeout)
-        except Exception, exc:
-	    log.warning("%s (args:%s kwargs:%s) failed with exception: %s" % (func, args, kwargs, exc))
-	    log.warning("%d retries remaining" % retries)
-	    retries -= 1
-            if retries < 0: 
-	        log.exception(exc)
-	        raise exc
-
 
 def new_password():
     import random
@@ -134,3 +121,8 @@ def new_password():
     l = random_string(string.letters, 4) + random_string(string.digits, 3) + random_string("!#$%+,-.:<=>@^_~", 3)
     random.shuffle(l)
     return ''.join(l)
+
+
+class RemoteCommandError(Exception):
+    pass
+
