@@ -6,10 +6,13 @@ from django.conf import settings
 
 from novaclient.v1_1 import client
 
-from wf.exceptions import TimeoutError, ReturnCodeNotZeroError
+from wf.exceptions import TimeoutError 
 
 log = logging.getLogger(__name__)
 
+@task
+def deploy_service_domain(domain_name):
+    pass
 
 """
 Task that will promote a Windows 2008 server to ADDC

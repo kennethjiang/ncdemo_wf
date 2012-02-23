@@ -34,7 +34,7 @@ expect {
 "*?assword:*" {send -- "$password\r"}
 }
 # send blank line (\r) to make sure we get back to gui
-send -- "\r"
+#send -- "\r"
 expect {
 timeout {exit -1}
 eof
