@@ -3,8 +3,9 @@ import time
 import re
 import logging
 import os
+import errno
 
-import wf.timeout
+from wf.timeout import TimeoutError, attempt
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def change_password(ip, username, old_pwd, new_pwd):
 	log.info("administrator of %s already has new password %s. No more action needed" % (ip, new_pwd))
     except:
         log.info("Changing amdin password of %s from %s to %s" % (ip, old_pwd, new_pwd))
-        ssh(ip, username, old_pwd, 'net user administrator "%s"' % new_pwd, timeout=20)
+        ssh(ip, username, old_pwd, 'net user administrator "%s"' % new_pwd, timeout=60)
  
 
 def promote_addc(ip, username, password, domain_name):
@@ -43,7 +44,7 @@ def promote_addc(ip, username, password, domain_name):
     try:
         log.info("Testing if %s is listening on 53(DNS). If so it's a domain controller already" % ip)
         if wait_for_server(host=ip, port=53, timeout=3):
-	    log.info("%s is listening on 53(DNS). If so it's a domain controller already. No more action needed" % ip)
+	    log.info("%s is listening on 53(DNS). It's a domain controller already. No more action needed" % ip)
 	    return
     except:
         log.info("Not accepting on 53. Moving ahead to promote %s to domain controller" % ip)
@@ -59,13 +60,24 @@ def change_dnsserver(ip, username, password, dnsserver):
 
     # guarding condition to make it idempotent
     log.info("Checking if %s is already configured with the desired DNS server %s" % (ip, dnsserver))
-    (out, err) = ssh(ip, username, password, 'netsh interface ip show dnsservers name="Local Area Connection"', timeout=20)
-    if re.search("DNS.*{dns}\s*$".format(dns=dnsserver), out, re.M):
+    if desired_dnsserver_set(ip, username, password, dnsserver):
         log.info(" %s is already configured with the desired DNS server %s. No more action needed" % (ip, dnsserver))
         return 
 
     log.info("Changing %s's DNS server to %s" % (ip, dnsserver))
     ssh(ip, username, password, 'netsh interface ip set dns name="Local Area Connection" source=static addr=%s' % dnsserver, timeout=20)
+
+    log.info("DNS change command would return 0 even when it failed. So I'd better verify it...")
+    if not desired_dnsserver_set(ip, username, password, dnsserver):
+        raise RemoteCommandError ("Yuck! I was told dns server has been changed to %s, it was actually not!" % dnsserver)
+
+
+def desired_dnsserver_set(ip, username, password, dnsserver):
+    (out, err) = ssh(ip, username, password, 'netsh interface ip show dnsservers name="Local Area Connection"', timeout=20)
+    if re.search("DNS.*{dns}\s*$".format(dns=dnsserver), out, re.M):
+        return True
+
+    return False
 
 
 def install_iis(ip, username, password):
@@ -111,22 +123,38 @@ def join_domain(ip, local_admin, local_password, domain_name, domain_admin, doma
         ssh(ip, local_admin, local_password, 'netdom join localhost /domain:"{domain}" /userd:"{d_adm}" /passwordd:"{d_pwd}" /usero:"{l_adm}" /passwordo:"{l_pwd}" /reboot:1'.format(domain=domain_name, d_adm=domain_admin, d_pwd=domain_password, l_adm=local_admin, l_pwd=local_password), timeout=20)
 	wait_for_reboot(ip)
 
+
+def install_exchange_server(ip, username, password):
+
+    wait_for_server(ip)
+    # guarding condition to make it idempotent
+    try:
+        log.info("Testing if %s is listening on 587. If so it already has Exchange Server running" % ip)
+        if wait_for_server(host=ip, port=587, timeout=5):
+	    return
+    except:
+        log.info("Not accepting on 587. Moving ahead to install Exchange Server on %s" % ip)
+
+    # command to install Exchange Server
+    ssh(ip, username, password, 'c:\exchange2010_64\Setup.com /mode:Install /roles:ClientAccess,HubTransport,Mailbox,ManagementTools /OrganizationName:LouisTeam', timeout=75*60)
+    wait_for_reboot(ip)
+
+
 def wait_for_server(host, port=22, protocol=socket.SOCK_STREAM, timeout=None, retry_delay=1):
     start = time.time()
-    log.info("Waiting for %s to become alive" % host)
     while (timeout is None or time.time() < (start + timeout)):
         try:
 	    log.debug("trying to connect to %s:%d" % (host, port))
             s = socket.socket(socket.AF_INET, protocol)
             s.settimeout(timeout)
             s.connect((host, port))
-	    log.info("connected! %s is alive!" % host)
+	    log.debug("connected! %s is alive!" % host)
             s.shutdown(2)
 	    return True
         except Exception, exc:
 	    log.debug("Unable to connect. Error: %s" % exc)
             time.sleep(retry_delay)
-    raise timeout.TimeoutError(os.strerror(errno.ETIME))
+    raise TimeoutError(os.strerror(errno.ETIME))
 
 
 def wait_for_reboot(ip):
