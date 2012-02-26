@@ -162,10 +162,10 @@ LOGGING = {
 import djcelery
 djcelery.setup_loader()
 
-BROKER_HOST = "192.168.5.5"
+BROKER_HOST = "172.16.0.14"
 BROKER_PORT = 5672
-BROKER_USER = "guest"
-BROKER_PASSWORD = "guest"
+BROKER_USER = "netcloud"
+BROKER_PASSWORD = "Go_Net_Cloud0"
 BROKER_VHOST = "/"
 CELERYD_CONCURRENCY = 10
 

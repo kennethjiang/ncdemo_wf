@@ -60,7 +60,7 @@ def change_dnsserver(ip, username, password, dnsserver):
 
     # guarding condition to make it idempotent
     log.info("Checking if %s is already configured with the desired DNS server %s" % (ip, dnsserver))
-    if desired_dnsserver_set(ip, username, password, dnsserver):
+    if verify_change_dnsserver(ip, username, password, dnsserver):
         log.info(" %s is already configured with the desired DNS server %s. No more action needed" % (ip, dnsserver))
         return 
 
@@ -68,16 +68,13 @@ def change_dnsserver(ip, username, password, dnsserver):
     ssh(ip, username, password, 'netsh interface ip set dns name="Local Area Connection" source=static addr=%s' % dnsserver, timeout=20)
 
     log.info("DNS change command would return 0 even when it failed. So I'd better verify it...")
-    if not desired_dnsserver_set(ip, username, password, dnsserver):
+    if not verify_change_dnsserver(ip, username, password, dnsserver):
         raise RemoteCommandError ("Yuck! I was told dns server has been changed to %s, it was actually not!" % dnsserver)
 
 
-def desired_dnsserver_set(ip, username, password, dnsserver):
+def verify_change_dnsserver(ip, username, password, dnsserver):
     (out, err) = ssh(ip, username, password, 'netsh interface ip show dnsservers name="Local Area Connection"', timeout=20)
-    if re.search("DNS.*{dns}\s*$".format(dns=dnsserver), out, re.M):
-        return True
-
-    return False
+    return re.search("DNS.*{dns}\s*$".format(dns=dnsserver), out, re.M)
 
 
 def install_iis(ip, username, password):
@@ -101,12 +98,19 @@ def tcpportsharing_auto(ip, username, password):
 
     # guarding condition to make it idempotent
     log.info("Checking if NetTcpPortSharing is already set to auto on %s" % ip)
-    (out, err) = ssh(ip, username, password, 'sc qc NetTcpPortSharing', timeout=20)
-    if re.search("START_TYPE.*AUTO_START\s*$", out, re.M):
+    if verify_tcpportsharing_auto(ip, username, password):
         log.info("NetTcpPortSharing is already set to auto on %s. No more action needed" % ip)
         return 
     log.info("setting NetTcpPortSharing service to auto on %s" % ip)
-    ssh(ip, username, password, 'sc config NetTcpPortSharing start= auto')
+    ssh(ip, username, password, 'sc config NetTcpPortSharing start= auto', timeout=20)
+
+    log.info("TcpPortSharing setting sometimes return 0 even when it failed. So I'd better verify it...")
+    if not verify_tcpportsharing_auto(ip, username, password):
+        raise RemoteCommandError ("Yuck! I was told TcpPortSharing was set to auo, but it was actually not!")
+
+def verify_tcpportsharing_auto(ip, username, password):
+    (out, err) = ssh(ip, username, password, 'sc qc NetTcpPortSharing', timeout=20)
+    return re.search("START_TYPE.*AUTO_START\s*$", out, re.M)
 
 
 def join_domain(ip, local_admin, local_password, domain_name, domain_admin, domain_password):
@@ -148,7 +152,7 @@ def wait_for_server(host, port=22, protocol=socket.SOCK_STREAM, timeout=None, re
             s = socket.socket(socket.AF_INET, protocol)
             s.settimeout(timeout)
             s.connect((host, port))
-	    log.debug("connected! %s is alive!" % host)
+	    log.debug("connected!")
             s.shutdown(2)
 	    return True
         except Exception, exc:
