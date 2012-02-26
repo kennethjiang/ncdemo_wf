@@ -1,4 +1,5 @@
 import logging
+from celery.contrib import rdb
 from celery.decorators import task
 from django.conf import settings
 
@@ -55,7 +56,7 @@ ip: ip address of the server
 def promote_addc(domain_name, ip, pwd):
 
     #wait for server to boot
-    win.wait_for_server(ip, timeout=10*60)
+    win.wait_for_server(ip, timeout=20*60)
 
     #change default password
     timeout.attempt(win.change_password, kwargs={
@@ -83,7 +84,7 @@ def deploy_exchange_server(ip, pwd, domain, addc_ip, domain_pwd):
 
     #Steps of  "preconfiguring" exchange server (whatever can be done without having to join domain
     #wait for server to boot
-    win.wait_for_server(ip, timeout=10*60)
+    win.wait_for_server(ip, timeout=20*60)
 
     #change default password
     timeout.attempt(win.change_password, kwargs={
@@ -134,3 +135,7 @@ def deploy_exchange_server(ip, pwd, domain, addc_ip, domain_pwd):
         'ip': ip, 'username': domain_user, 'password': domain_pwd},
 	timeout=90*60, retries=0)
 
+
+@task
+def reset_testing_env():
+    iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID))

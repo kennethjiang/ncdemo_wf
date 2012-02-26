@@ -10,3 +10,10 @@ class VMInstance(models.Model):
         db_table = 'vm_instances'
 
 
+def new_vminstance(instance_id, ip, admin_pwd):
+    i = VMInstance()
+    i.instance_id = instance_id
+    i.internal_ip = ip
+    i.admin_password = admin_pwd
+    i.save()
+    return i
