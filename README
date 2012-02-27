@@ -1,0 +1,28 @@
+
+:Installation
+
+:: Prerequisites:
+1. Python 2.7+
+
+1. Install git: apt-get update && apt-get install git
+
+2. Install Django and Celery:
+  apt-get update
+  apt-get install python-pip
+  apt-get install python-mysqldb
+  pip install django
+  pip install -U Celery
+  pip install django-celery
+
+
+3. Install nova_client
+  apt-get install -y python-software-properties
+  apt-add-repository -y ppa:managedit/openstack
+  apt-get update
+  apt-get install python-novaclient
+
+4. Configure Django, Celery, Ncdemo
+   open settings.py and make adjustment
+
+4. Create database and tables;
+   python manage.py syncdb
