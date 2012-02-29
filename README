@@ -24,5 +24,8 @@
 4. Configure Django, Celery, Ncdemo
    open settings.py and make adjustment
 
-4. Create database and tables;
+5. Create database and tables;
    python manage.py syncdb
+
+6. install 'expect'
+   apt-get install expect

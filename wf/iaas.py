@@ -5,7 +5,8 @@ from django.conf import settings
 
 from novaclient.v1_1 import client
 
-import models
+import  models
+
 
 log = logging.getLogger(__name__)
 
@@ -31,19 +32,17 @@ def create_instance(name, image, flavor, userdata=None, key_name=None, security_
 	if n.networks and n.networks.has_key('internal') and len(n.networks['internal']) > 0:
             #assuming VM always has 1 internal IP
 	    ip = n.networks['internal'][0]
-            instance = models.new_vminstance(node.id, ip, '')
-	    instance.save()
 	    log.debug("IP address is %s" % ip)
-	    return ip
+	    return (n.id, ip)
 	log.debug("no IP address assigned yet. waiting for 3s")
 	time.sleep(3)
 
 
 def reset_testing_env(img_list):
     for i in models.VMInstance.objects.all():
-        if nova_client().servers.get(i.instance_id).image['id'] in [str(x) for x in img_list]:
+        if i.instance_id and nova_client().servers.get(i.instance_id).image['id'] in [str(x) for x in img_list]:
             nova_client().servers.delete(i.instance_id)
-	    i.delete()
+        i.delete()
 
 def nova_client():
     return client.Client(

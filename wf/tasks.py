@@ -6,6 +6,7 @@ from django.conf import settings
 import timeout 
 import iaas
 import win
+import models
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ exchange server.
 domain_name: name of the to-be-created domain, assumed to end with ".com"
 """
 @task(time_limit=120*60)
-def deploy_service_domain(domain_name, services_requested):
+def deploy_service_domain(domain_name, company_service_ids):
 
     #added domain name to host name as Windows doesn't allow 2 servers to have the same host name on the local network (otherwise adding server to domain will fail)
     addc_hostname = "dc-"+domain_name.replace('.com', '')
@@ -31,15 +32,20 @@ def deploy_service_domain(domain_name, services_requested):
     addc_admin_pwd = "abcDEFG!@#12" #win.new_password()
     exch_admin_pwd = "abcDEFG!@#12" #win.new_password()
 
+    #rdb.set_trace()
     #create addc
-    addc_ip = timeout.attempt(iaas.create_instance, 
+    (addc_id, addc_ip) = timeout.attempt(iaas.create_instance, 
         args=[addc_hostname, ADDC_IMG_ID, ADDC_FLAVOR_ID],
 	timeout=60, retries=0)
 
+    models.new_vminstance(addc_id, addc_ip, addc_admin_pwd, company_service_ids, 6) #6 is the service_id for ADDC
+
     #create exchange server
-    exch_ip = timeout.attempt(iaas.create_instance, 
+    (exch_id, exch_ip) = timeout.attempt(iaas.create_instance, 
         args=[exch_hostname, EXCH_IMG_ID, EXCH_FLAVOR_ID],
 	timeout=60, retries=0)
+
+    models.new_vminstance(exch_id, exch_ip, exch_admin_pwd, company_service_ids, 1) #1 is the service_id for Exchange Server
 
     #delayed task to promote to ADDC
     promote_addc(domain_name=domain_name, ip=addc_ip, pwd=addc_admin_pwd)
