@@ -40,9 +40,13 @@ def create_instance(name, image, flavor, userdata=None, key_name=None, security_
 
 def reset_testing_env(img_list):
     for i in models.VMInstance.objects.all():
-        if i.instance_id and nova_client().servers.get(i.instance_id).image['id'] in [str(x) for x in img_list]:
-            nova_client().servers.delete(i.instance_id)
         i.delete()
+	try:
+            if i.instance_id and nova_client().servers.get(i.instance_id).image['id'] in [str(x) for x in img_list]:
+                nova_client().servers.delete(i.instance_id)
+	except Exception, exc:
+	    log.warn("Exception in deleting VM. Maybe the VM has been deleted mannually.")
+	    log.exception(exc)
 
 def nova_client():
     return client.Client(
