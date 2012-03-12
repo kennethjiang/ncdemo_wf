@@ -46,7 +46,7 @@ def new_vminstance(instance_id, ip, admin_pwd, company_service_ids, service_id):
         i.company_service_id = c.id
 
     i.save()
-    log.debug(connection.queries)
+    #log.debug(connection.queries)
     return i
 
 
@@ -56,8 +56,16 @@ def change_vminstance_status(ip, state):
         return
     i.state = state
     i.save()
-    cs = CompanyService.objects.get(id=i.i.company_service_id)
+    cs = CompanyService.objects.get(id=i.company_service_id)
     cs.status = state
     cs.save()
-    log.debug(connection.queries)
+    #log.debug(connection.queries)
 
+def change_service_status(company_service_ids, state):
+    for i in VMInstance.objects.filter(company_service_id__in = company_service_ids):
+        i.state = state
+	i.save()
+
+    for cs in CompanyService.objects.filter(id__in = company_service_ids):
+        cs.status = state
+	cs.save()

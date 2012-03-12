@@ -38,8 +38,13 @@ def create_instance(name, image, flavor, userdata=None, key_name=None, security_
 	time.sleep(3)
 
 
-def reset_testing_env(img_list):
-    for i in models.VMInstance.objects.all():
+def reset_testing_env(img_list, company_service_ids=None):
+    if company_service_ids:
+        insts = models.VMInstance.objects.filter(company_service_id__in=company_service_ids)
+    else
+        insts = models.VMInstance.objects.all()
+
+    for i in insts:
         i.delete()
 	try:
             if i.instance_id and nova_client().servers.get(i.instance_id).image['id'] in [str(x) for x in img_list]:

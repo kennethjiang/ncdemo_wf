@@ -1,6 +1,7 @@
 import logging
 from celery.contrib import rdb
 from celery.decorators import task
+from celery.task import Task
 from django.conf import settings
 
 import timeout 
@@ -17,12 +18,31 @@ EXCH_FLAVOR_ID = getattr(settings, 'EXCH_FLAVOR_ID')
 ADMIN_USER = 'administrator'
 ADMIN_INI_PWD = getattr(settings, 'ADMIN_INI_PASSWORD')
 
+
+class ServiceMain(Task):
+    abstract = True
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        models.change_service_status(args[1], 4)
+
+
+class ServiceSingle(Task):
+    abstract = True
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        models.change_vminstance_status(kwargs['ip'], 4)
+
+    def on_success(self, retval, task_id, args, kwargs):
+        models.change_vminstance_status(kwargs['ip'], 3)
+
+
+
 """
 Task that will deploy a Windows domain, including a domain controller and an
 exchange server.
 domain_name: name of the to-be-created domain, assumed to end with ".com"
 """
-@task(time_limit=120*60)
+@task(base=ServiceMain, time_limit=120*60)
 def deploy_service_domain(domain_name, company_service_ids):
 
     #added domain name to host name as Windows doesn't allow 2 servers to have the same host name on the local network (otherwise adding server to domain will fail)
@@ -48,9 +68,11 @@ def deploy_service_domain(domain_name, company_service_ids):
     models.new_vminstance(exch_id, exch_ip, exch_admin_pwd, company_service_ids, 1) #1 is the service_id for Exchange Server
 
     #delayed task to promote to ADDC
-    promote_addc(domain_name=domain_name, ip=addc_ip, pwd=addc_admin_pwd)
-    
+    promote_addc.delay(domain_name=domain_name, ip=addc_ip, pwd=addc_admin_pwd).wait(propagate=False)
+
+
     deploy_exchange_server.delay(ip=exch_ip, pwd=exch_admin_pwd, domain=domain_name, addc_ip=addc_ip, domain_pwd=addc_admin_pwd)
+    
     
 
 """
@@ -58,7 +80,7 @@ Task that will promote a Windows 2008 server to ADDC
 domain_name: name of the to-be-created domain, assumed to end with ".com"
 ip: ip address of the server
 """
-@task(time_limit=120*60)
+@task(base=ServiceSingle, time_limit=120*60)
 def promote_addc(domain_name, ip, pwd):
 
     #wait for server to boot
@@ -85,7 +107,7 @@ def promote_addc(domain_name, ip, pwd):
 """
 Task that will perform all configuration needed to deploy an Exchange Server
 """
-@task(time_limit=120*60)
+@task(base=ServiceSingle, time_limit=120*60)
 def deploy_exchange_server(ip, pwd, domain, addc_ip, domain_pwd):
 
     #Steps of  "preconfiguring" exchange server (whatever can be done without having to join domain
@@ -145,3 +167,10 @@ def deploy_exchange_server(ip, pwd, domain, addc_ip, domain_pwd):
 @task
 def reset_testing_env():
     iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID))
+
+
+@task(time_limit=5*60)
+def rebuild_service_domain(domain_name, company_service_ids):
+    iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID), company_service_ids)
+    deploy_service_domain.delay(domain_name, company_service_ids)
+
