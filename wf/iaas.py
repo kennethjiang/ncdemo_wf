@@ -41,7 +41,7 @@ def create_instance(name, image, flavor, userdata=None, key_name=None, security_
 def reset_testing_env(img_list, company_service_ids=None):
     if company_service_ids:
         insts = models.VMInstance.objects.filter(company_service_id__in=company_service_ids)
-    else
+    else:
         insts = models.VMInstance.objects.all()
 
     for i in insts:
