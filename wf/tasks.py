@@ -45,12 +45,14 @@ domain_name: name of the to-be-created domain, assumed to end with ".com"
 @task(base=ServiceMain, time_limit=120*60)
 def deploy_service_domain(domain_name, company_service_ids):
 
+    deploy_wiki_wp_service.delay(domain_name, company_service_ids)
+
     #added domain name to host name as Windows doesn't allow 2 servers to have the same host name on the local network (otherwise adding server to domain will fail)
     addc_hostname = "dc-"+domain_name.replace('.com', '')
     exch_hostname = "mail-"+domain_name.replace('.com', '')
 
-    addc_admin_pwd = "abcDEFG!@#12" #win.new_password()
-    exch_admin_pwd = "abcDEFG!@#12" #win.new_password()
+    addc_admin_pwd = win.new_password()
+    exch_admin_pwd = win.new_password()
 
     #rdb.set_trace()
     #create addc
@@ -58,14 +60,14 @@ def deploy_service_domain(domain_name, company_service_ids):
         args=[addc_hostname, ADDC_IMG_ID, ADDC_FLAVOR_ID],
 	timeout=60, retries=0)
 
-    models.new_vminstance(addc_id, addc_ip, addc_admin_pwd, company_service_ids, 6) #6 is the service_id for ADDC
+    models.new_vminstance(addc_id, addc_ip, addc_admin_pwd, company_service_ids, addc_hostname, [6]) #6 is the service_id for ADDC
 
     #create exchange server
     (exch_id, exch_ip) = timeout.attempt(iaas.create_instance, 
         args=[exch_hostname, EXCH_IMG_ID, EXCH_FLAVOR_ID],
 	timeout=60, retries=0)
 
-    models.new_vminstance(exch_id, exch_ip, exch_admin_pwd, company_service_ids, 1) #1 is the service_id for Exchange Server
+    models.new_vminstance(exch_id, exch_ip, exch_admin_pwd, company_service_ids, exch_hostname, [1]) #1 is the service_id for Exchange Server
 
     #delayed task to promote to ADDC
     promote_addc.delay(domain_name=domain_name, ip=addc_ip, pwd=addc_admin_pwd).wait(propagate=False)
@@ -74,6 +76,26 @@ def deploy_service_domain(domain_name, company_service_ids):
     deploy_exchange_server.delay(ip=exch_ip, pwd=exch_admin_pwd, domain=domain_name, addc_ip=addc_ip, domain_pwd=addc_admin_pwd)
     
     
+
+@task(time_limit=120*60)
+def deploy_wiki_wp_service(domain_name, company_service_ids):
+    hostname = "wikiwp-"+domain_name.replace('.com', '')
+    (inst_id, ip) = timeout.attempt(iaas.create_instance,
+        args=[hostname, 68, ADDC_FLAVOR_ID],
+        timeout=60, retries=0)
+    turnon_wiki_wp_service.delay(inst_id=inst_id, ip=ip, company_service_ids=company_service_ids, hostname=hostname, domain=domain_name.replace('.com', ''))
+
+
+@task(base=ServiceSingle, time_limit=120*60)
+def turnon_wiki_wp_service(inst_id, ip, company_service_ids, hostname, domain):
+
+    sids = models.new_vminstance(inst_id, ip, 'dalun', company_service_ids, domain, [15, 13])
+    for sid in sids:
+        if sid == 15:
+             win.turn_on_wikiwp(ip, 'ubuntu', 'dalun', domain, 'wiki')
+        if sid == 13:
+             win.turn_on_wikiwp(ip, 'ubuntu', 'dalun', domain, 'wp')
+
 
 """
 Task that will promote a Windows 2008 server to ADDC
@@ -166,11 +188,11 @@ def deploy_exchange_server(ip, pwd, domain, addc_ip, domain_pwd):
 
 @task
 def reset_testing_env():
-    iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID))
+    iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID, 68))
 
 
 @task(time_limit=5*60)
 def rebuild_service_domain(domain_name, company_service_ids):
-    iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID), company_service_ids)
+    iaas.reset_testing_env((ADDC_IMG_ID, EXCH_IMG_ID, 68), company_service_ids)
     deploy_service_domain.delay(domain_name, company_service_ids)
 

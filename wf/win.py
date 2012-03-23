@@ -144,6 +144,11 @@ def install_exchange_server(ip, username, password):
     wait_for_reboot(ip)
 
 
+def turn_on_wikiwp(ip, username, password, domain, kw):
+
+    wait_for_server(ip)
+    ssh(ip, username, password, "sudo /home/dalun/install-service.sh %s %s on" % (kw, domain), timeout=60)
+
 def wait_for_server(host, port=22, protocol=socket.SOCK_STREAM, timeout=None, retry_delay=1):
     start = time.time()
     while (timeout is None or time.time() < (start + timeout)):
